@@ -1,0 +1,25 @@
+{
+  "name": "activity-ranking-playwright-cucumber",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Executable TypeScript + Playwright + Cucumber API contract tests for Activity Ranking API",
+  "scripts": {
+    "test": "cucumber-js",
+    "test:html": "cucumber-js --format progress --format html:reports/cucumber-report.html",
+    "test:location": "cucumber-js --tags @location",
+    "test:contract": "cucumber-js --tags @contract",
+    "typecheck": "tsc --noEmit",
+    "postinstall": "playwright --version"
+  },
+  "devDependencies": {
+    "@cucumber/cucumber": "^11.2.0",
+    "@playwright/test": "^1.55.0",
+    "@types/node": "^22.13.4",
+    "playwright": "^1.55.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
