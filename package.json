@@ -5,9 +5,11 @@
   "description": "Executable TypeScript + Playwright + Cucumber API contract tests for Activity Ranking API",
   "scripts": {
     "test": "cucumber-js",
-    "test:html": "cucumber-js --format progress --format html:reports/cucumber-report.html",
+    "test:html": "mkdir -p reports && cucumber-js --format progress --format html:reports/cucumber-report.html",
     "test:location": "cucumber-js --tags @location",
     "test:contract": "cucumber-js --tags @contract",
+    "test:mock": "cucumber-js --profile mock",
+    "test:weather": "cucumber-js --tags @weather",
     "typecheck": "tsc --noEmit",
     "postinstall": "playwright --version"
   },
