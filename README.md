@@ -6,200 +6,114 @@ This is a runnable **API automation framework** using Playwright's API request c
 
 The API implementation is not included in the assignment, so the tests will not pass until a compatible service is running. If nothing is listening at the configured URL, the suite will report a connection error; this is expected for a test-first contract suite.
 
+To show the steps and assertions are sound, a second, **separate `@mock` suite** runs the same step definitions against an in-process mock API and a stubbed Open-Meteo, and passes (`npm run test:mock`). See [Two suites](#two-suites-spec-red-and-mock-green).
+
 ## Prerequisites
 
 - Node.js 20+
-- npm 10+ recommended
-- The Activity Ranking API service, when available
+- An Activity Ranking API implementation (none exists yet, so the suite is expected to be **red**)
 
-## Setup
+## Setup and run
 
 ```bash
 npm install
 npm run typecheck
+npm test                 # all scenarios
+npm run test:mock        # green mock suite
+npm run test:location    # also: test:contract, test:weather, test:html (spec suite)
+npx cucumber-js --tags "@ranking and @dependency"
 ```
 
-No browser installation is needed for these API tests. Playwright's `APIRequestContext` sends HTTP requests directly, so Chromium/WebKit/Firefox are not required.
-
-Copy `.env.example` to `.env` if you want a local reminder of the configuration. This project does not load `.env` automatically; environment variables are read directly by Node. Set them in your terminal as shown below.
-
-## Execute tests
-
-### Windows PowerShell
-
-```powershell
-$env:ACTIVITY_RANKING_API_URL = "http://127.0.0.1:3000"
-npm test
-```
-
-### macOS / Linux
+Start the API under test with Open-Meteo redirected to the stub the tests host, then run the suite:
 
 ```bash
-export ACTIVITY_RANKING_API_URL=http://127.0.0.1:3000
-npm test
+# terminal 1 – the API under test (your implementation)
+OPEN_METEO_BASE_URL=http://127.0.0.1:4010 npm start
+
+# terminal 2
+ACTIVITY_RANKING_API_URL=http://127.0.0.1:3000 npm test
 ```
 
-The API URL defaults to `http://127.0.0.1:3000`, and the request timeout defaults to 10 seconds.
+Configuration (environment variables; see `.env.example`): `ACTIVITY_RANKING_API_URL` (default `http://127.0.0.1:3000`), `API_REQUEST_TIMEOUT_MS` (10000), `OPEN_METEO_STUB_PORT` (4010). The HTML report is written to `reports/cucumber-report.html`.
 
-### Run a subset
+**Red state:** with nothing listening, every scenario fails at its first HTTP request with a connection error. Against a non-conforming API, failures name the violated expectation (status, field, ordering, reasoning text, or Open-Meteo interaction).
 
-```bash
-npm run test:location
-npm run test:contract
-```
+## Two suites: spec (red) and mock (green)
 
-Or use Cucumber tags directly:
+| Command | Feature files | Runs against | Expected |
+|---|---|---|---|
+| `npm test` | `features/*.feature` (21 scenarios) | the real API at `ACTIVITY_RANKING_API_URL` | **Red** until an implementation exists |
+| `npm run test:mock` | `features/mock/*.feature` (10 scenarios, tagged `@mock`) | in-process mock API + Open-Meteo stub | **Green** |
 
-```bash
-npx cucumber-js --tags @ranking
-npx cucumber-js --tags @validation
-npx cucumber-js --tags @dependency
-```
+The mock suite reuses the same step definitions, so it proves the assertions are satisfiable by a conforming API. The mock API (`src/mock/mockActivityRankingApi.ts`) is intentionally simple, is not the system under test, and its scoring is illustrative only. It is started by a `@mock`-tagged Cucumber hook and needs no setup.
 
-### Generate an HTML report
-
-```bash
-npm run test:html
-```
-
-The output path is `reports/cucumber-report.html`. If the directory does not exist, create it before running:
-
-**PowerShell**
-```powershell
-New-Item -ItemType Directory -Force reports
-npm run test:html
-```
-
-**macOS / Linux**
-```bash
-mkdir -p reports
-npm run test:html
-```
-
-## Framework structure
+## Structure
 
 ```text
-activity-ranking-playwright-cucumber/
-├── features/
-│   ├── activity-ranking.feature
-│   └── step-definitions/
-│       └── activity-ranking.steps.ts
-├── src/
-│   └── support/
-│       ├── hooks.ts
-│       └── world.ts
-├── .env.example
-├── .gitignore
-├── cucumber.js
-├── package.json
-├── tsconfig.json
-└── README.md
+features/activity-ranking.feature              Gherkin scenarios (21 incl. outline rows)
+features/mock/activity-ranking.mock.feature    Scenarios run against the in-process mock API (green)
+features/step-definitions/*.steps.ts           HTTP actions and assertions (shared by both suites)
+src/mock/mockActivityRankingApi.ts             Minimal mock Activity Ranking API for the @mock suite
+src/support/world.ts                           Cucumber World: Playwright APIRequestContext + response state
+src/support/hooks.ts                           Starts/stops the stub, resets state per scenario
+src/stubs/openMeteoStub.ts                     Local Open-Meteo stand-in (geocoding, forecast, marine)
 ```
 
-- `features/activity-ranking.feature`: readable acceptance criteria in Gherkin.
-- `features/step-definitions/activity-ranking.steps.ts`: scenario steps, HTTP actions, and assertions.
-- `src/support/hooks.ts`: creates and disposes Playwright's API request context per scenario.
-- `src/support/world.ts`: TypeScript contracts and scenario state.
-- `cucumber.js`: TypeScript registration, feature discovery, and reporter setup.
-- `package.json`: dependency and execution scripts.
+## API contract under test
 
-## Proposed API contract
+### `GET /api/locations?query=<partial name>` (autocomplete)
 
-The ticket does not specify the endpoint, response envelope, score scale, or exact status codes. The framework makes the following explicit assumptions so that the tests can be implemented.
+- `200 {"matches":[{"name","country","region?","latitude","longitude"}]}`; matching is a case-insensitive prefix on the trimmed query; no candidates gives `{"matches":[]}`.
+- `400 {"error":"query is required"}` when absent, empty or whitespace.
 
-### Request
-
-```http
-GET /api/activity-rankings?location=Lisbon
-Accept: application/json
-```
-
-### Forecast response
+### `GET /api/activity-rankings?location=<city or town>`
 
 ```json
 {
-  "location": {
-    "name": "Lisbon",
-    "latitude": 38.7223,
-    "longitude": -9.1393
-  },
+  "location": { "name": "Lisbon", "country": "Portugal", "latitude": 38.71667, "longitude": -9.13333 },
   "days": [
     {
       "date": "2026-10-14",
       "activities": [
-        {
-          "date": "2026-10-14",
-          "activity": "Outdoor Sightseeing",
-          "suitability": 91,
-          "reasoning": "Clear skies and a mild temperature are favourable for walking outdoors."
-        }
+        { "date": "2026-10-14", "activity": "Outdoor Sightseeing", "rank": 1, "suitability": 82, "reasoning": "Clear skies and 22°C" }
       ]
     }
   ]
 }
 ```
 
-The real response should contain seven consecutive dates and four activities for every date: `Skiing`, `Surfing`, `Outdoor Sightseeing`, and `Indoor Sightseeing`. Activities within each day are ordered by descending suitability.
-
-### Partial match response
-
-```json
-{
-  "matches": [
-    {
-      "name": "San Francisco",
-      "latitude": 37.7749,
-      "longitude": -122.4194
-    }
-  ]
-}
-```
-
-### Error contract
-
-- `400`: missing or whitespace-only location.
-- `404`: no matching city or town.
-- `502`: Open-Meteo/provider failure.
-- Error body is a JSON object with an `error` or `message` field.
-
-These are proposed test assumptions, not claims about an existing implementation. Confirm them with the API owner before changing production code.
+- Seven consecutive `days` matching the dates Open-Meteo returns; each day lists all four activities (`Skiing`, `Surfing`, `Outdoor Sightseeing`, `Indoor Sightseeing`) exactly once, sorted by `suitability` descending, `rank` 1–4.
+- `suitability` is a number 0–100 (higher is better). `reasoning` is a non-empty human-readable string.
+- The name is trimmed and matched case-insensitively to a geocoding result; the first exact-name match is used. Disambiguation of same-named places is done by the client through `/api/locations`.
+- `400` missing/blank `location` (Open-Meteo not called), `404` no location matched (forecast not requested), `502` Open-Meteo geocoding or forecast failure. Error bodies are `{"error": "..."}` (or `message`).
 
 ## Open-Meteo strategy
 
-The tests call the Activity Ranking API, not Open-Meteo directly. This keeps acceptance tests focused on the product contract and prevents live weather changes from making assertions flaky.
+The tests never call the real Open-Meteo. `src/stubs/openMeteoStub.ts` runs in-process for the whole run and mimics three services on one host: `/v1/search` (geocoding, omits `results` when nothing matches, as the real one does), `/v1/forecast` (daily `weather_code`, `temperature_2m_*`, `precipitation_sum`, `snowfall_sum`, `wind_speed_10m_max`) and `/v1/marine` (daily `wave_height_max`, for surfing). The API under test must read a configurable base URL (`OPEN_METEO_BASE_URL`) for all three.
 
-The provider-failure scenario uses a test-only header, `x-test-weather-provider: unavailable`, as a proposed fault-injection seam. The API under test must support it in a test environment for that scenario to pass. If that is not acceptable, inject a stub weather provider at the service level instead. Do not expose fault injection in production.
+Why: weather-to-activity scenarios ("snow favours skiing", "rain favours indoor") need controlled inputs; real forecasts change daily and would make them flaky. It also allows failure injection (500s) with no test-only header in the product, and lets scenarios assert *how* the API uses Open-Meteo (geocodes the name, requests 7 days at the resolved coordinates, skips the forecast for unknown places).
 
-Provider adapter unit tests should separately cover geocoding and forecast errors, missing weather variables, timeouts, and malformed provider responses.
+Provider adapter unit tests (malformed payloads, missing variables, timeouts) belong in the implementation repo; a live-Open-Meteo smoke test is a sensible separate, non-blocking job.
 
 ## Coverage
 
-- Exact city and partial city lookup
-- Missing and blank location input
-- Unknown city handling
-- Seven consecutive forecast dates
-- Four unique activities for every date
-- Score type and 0–100 range
-- Descending ranking order
-- Activity date consistency and non-empty reasoning
-- Candidate location name and coordinate validation
-- Upstream provider failure response
+Partial/case/whitespace location search and empty results; blank/missing inputs (both endpoints); unknown city; seven dates from the provider; four unique activities per day; score range; ordering and rank; case-insensitive city names; weather behaviour for snow, clear/mild, rain/wind and surf conditions (relative ordering plus reasoning keywords); Open-Meteo call verification; geocoding and forecast outages.
 
 ## Assumptions and trade-offs
 
-1. The scoring formula is not defined by the ticket. These tests validate score bounds and ordering, not whether a specific weather forecast deserves a particular score.
-2. Surfing suitability may require marine/wave forecast data, not just standard weather variables. The API must document its source and fallback behaviour.
-3. The contract does not define timezone policy. It requires consecutive ISO dates; the product team should decide whether the first date follows the location's local calendar or UTC.
-4. Tie-breaking is not asserted; equal suitability scores are allowed.
-5. Authentication, rate limiting, caching, latency objectives, and load testing are omitted because they are not described in the ticket.
-6. The test-only provider failure header is a proposed seam and needs implementation or replacement with an injected stub.
+1. The scoring formula is unspecified, so weather scenarios assert **relative** outcomes and keywords in the reasoning (e.g. "snow", "clear", "22"), never exact scores. The "22" check pins the ticket's `Clear skies and 22°C` example; reasoning wording beyond those keywords is free.
+2. Stub weather is identical on all seven days, which keeps assertions simple but does not test day-to-day variation; mixed-week fixtures would be the next step.
+3. Dates are generated from the current UTC date. A run crossing midnight UTC can flake; timezone policy (location-local vs UTC) is left to the product team.
+4. Timeouts/slow-provider behaviour, rate limiting, auth, caching, latency and load are omitted (not in the ticket).
+5. Equal scores are allowed; tie-breaking is not asserted.
+6. The mock API exists only to demonstrate passing assertions. Its scoring is illustrative; it is not a reference implementation and must not be treated as the specification of scoring.
+7. The endpoint split (`/api/locations` + `/api/activity-rankings`), field names and status codes are my proposal and should be agreed with the API owner.
 
 ## Troubleshooting
 
-- **Connection refused:** start the API or point `ACTIVITY_RANKING_API_URL` at a running test instance.
-- **All assertions fail on response shape:** compare the implementation with the proposed contract above; update the contract only after confirming the intended API behaviour.
-- **TypeScript compilation fails:** use Node 20+ and run `npm install` before `npm run typecheck`.
-- **HTML report cannot be written:** create the `reports` directory, then rerun `npm run test:html`.
+- **Connection refused / every scenario fails at the request:** the API is not running at `ACTIVITY_RANKING_API_URL`.
+- **`EADDRINUSE` on 4010:** set `OPEN_METEO_STUB_PORT` and point the API's `OPEN_METEO_BASE_URL` to the same port.
+- **Status 502 where 200 expected:** the API is not using the stub (check `OPEN_METEO_BASE_URL`, which must be reachable and set before the API starts).
 
 ## Publish to a public GitHub repository
 

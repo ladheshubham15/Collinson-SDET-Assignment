@@ -1,37 +1,38 @@
-import { Before, After, setDefaultTimeout } from "@cucumber/cucumber";
-import { request, type APIRequestContext } from "@playwright/test";
-import type { ScenarioWorld } from "./world";
+import { Before, After, BeforeAll, AfterAll, setDefaultTimeout } from "@cucumber/cucumber";
+import { MockActivityRankingApi } from "../mock/mockActivityRankingApi";
+import { openMeteoStub } from "../stubs/openMeteoStub";
+import type { ApiWorld } from "./world";
 
-setDefaultTimeout(15_000);
+setDefaultTimeout(20_000);
 
-let apiContext: APIRequestContext | undefined;
+export const stubPort = (): number => Number(process.env.OPEN_METEO_STUB_PORT ?? 4010);
 
-export function getApiContext(): APIRequestContext {
-  if (!apiContext) {
-    throw new Error("Playwright API context has not been initialized. Check the Cucumber Before hook.");
-  }
-  return apiContext;
-}
-
-export function getApiBaseUrl(): string {
-  return (process.env.ACTIVITY_RANKING_API_URL ?? "http://127.0.0.1:3000").replace(/\/+$/, "");
-}
-
-Before(async function (this: ScenarioWorld) {
-  apiContext = await request.newContext({
-    baseURL: getApiBaseUrl(),
-    extraHTTPHeaders: {
-      Accept: "application/json"
-    },
-    timeout: Number(process.env.API_REQUEST_TIMEOUT_MS ?? 10_000)
-  });
-
-  this.response = undefined;
-  this.responseBody = undefined;
-  this.providerFailureEnabled = false;
+BeforeAll(async () => {
+  await openMeteoStub.start(stubPort());
 });
 
-After(async function () {
-  await apiContext?.dispose();
-  apiContext = undefined;
+let mockApi: MockActivityRankingApi | undefined;
+let mockApiUrl: string | undefined;
+
+AfterAll(async () => {
+  await mockApi?.stop();
+  await openMeteoStub.stop();
+});
+
+// Must be declared before the generic Before so the API context is created with the mock URL.
+Before({ tags: "@mock" }, async function (this: ApiWorld) {
+  if (!mockApi) {
+    mockApi = new MockActivityRankingApi(`http://127.0.0.1:${openMeteoStub.port}`);
+    mockApiUrl = await mockApi.start();
+  }
+  this.baseUrl = mockApiUrl;
+});
+
+Before(async function (this: ApiWorld) {
+  openMeteoStub.reset();
+  await this.init();
+});
+
+After(async function (this: ApiWorld) {
+  await this.dispose();
 });
